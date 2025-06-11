@@ -79,6 +79,7 @@ def process_jackal_img(msg) -> Image:
     img = np.frombuffer(msg.data, dtype=np.uint8).reshape(
         msg.height, msg.width, -1)
     pil_image = Image.fromarray(img)
+    pil_image = pil_image.resize(IMAGE_SIZE)
     return pil_image
 
 #######################################################################
