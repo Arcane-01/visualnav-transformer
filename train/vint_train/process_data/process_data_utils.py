@@ -72,6 +72,15 @@ def process_sacson_img(msg) -> Image:
     return pil_image
 
 
+def process_jackal_img(msg) -> Image:
+    """
+    Process image data from a topic that publishes sensor_msgs/Image to a PIL image for the jackal dataset
+    """
+    img = np.frombuffer(msg.data, dtype=np.uint8).reshape(
+        msg.height, msg.width, -1)
+    pil_image = Image.fromarray(img)
+    return pil_image
+
 #######################################################################
 
 
@@ -108,6 +117,18 @@ def nav_to_xy_yaw(odom_msg, ang_offset: float) -> Tuple[List[float], float]:
 
 ############ Add custom odometry processing functions here ############
 
+def pose_to_xy_yaw(odom_msg, ang_offset: float) -> Tuple[List[float], float]:
+    """
+    Process odom data from a topic that publishes geometry_msgs/PoseStamped into position
+    """
+
+    position = odom_msg.pose.position
+    orientation = odom_msg.pose.orientation
+    yaw = (
+        quat_to_yaw(orientation.x, orientation.y, orientation.z, orientation.w)
+        + ang_offset
+    )
+    return [position.x, position.y], yaw
 
 #######################################################################
 
