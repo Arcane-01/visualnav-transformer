@@ -149,7 +149,6 @@ def get_images_and_odom(
         bag (rosbag.Bag): bag file
         imtopics (list[str] or str): topic name(s) for image data
         odomtopics (list[str] or str): topic name(s) for odom data # PoseStamped for custom dataset
-        veltopics (list[str] or str): topic name(s) for odom data
         img_process_func (Any): function to process image data
         odom_process_func (Any): function to process odom data
         rate (float, optional): rate to sample data. Defaults to 4.0.

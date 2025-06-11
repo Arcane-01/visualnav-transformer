@@ -29,7 +29,6 @@ sacson:
 # add your own datasets below:
 jackal:
   odomtopics: "/vrpn_client_node/jackal/pose"
-  veltopics: "/odometry/filtered"
   imtopics: "/camera/color/image_decompressed"
   ang_offset: 0.0
   img_process_func: "process_jackal_img"
