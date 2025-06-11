@@ -116,6 +116,7 @@ def get_images_and_odom(
     bag: rosbag.Bag,
     imtopics: List[str] or str,
     odomtopics: List[str] or str,
+    veltopics: List[str] or str,
     img_process_func: Any,
     odom_process_func: Any,
     rate: float = 4.0,
@@ -127,7 +128,8 @@ def get_images_and_odom(
     Args:
         bag (rosbag.Bag): bag file
         imtopics (list[str] or str): topic name(s) for image data
-        odomtopics (list[str] or str): topic name(s) for odom data
+        odomtopics (list[str] or str): topic name(s) for odom data # PoseStamped for custom dataset
+        veltopics (list[str] or str): topic name(s) for odom data
         img_process_func (Any): function to process image data
         odom_process_func (Any): function to process odom data
         rate (float, optional): rate to sample data. Defaults to 4.0.
@@ -139,6 +141,8 @@ def get_images_and_odom(
     # check if bag has both topics
     odomtopic = None
     imtopic = None
+    veltopic = None
+
     if type(imtopics) == str:
         imtopic = imtopics
     else:
@@ -153,27 +157,40 @@ def get_images_and_odom(
             if bag.get_message_count(ot) > 0:
                 odomtopic = ot
                 break
-    if not (imtopic and odomtopic):
-        # bag doesn't have both topics
-        return None, None
+    if type(veltopics) == str:
+        veltopic = odomtopics
+    else:
+        for vt in veltopics:
+            if bag.get_message_count(vt) > 0:
+                veltopic = ot
+                break
+
+    if not (imtopic and odomtopic and veltopic):
+        # bag doesn't have the three topics
+        return None, None, None
 
     synced_imdata = []
     synced_odomdata = []
+    synced_veldata = []
     # get start time of bag in seconds
     currtime = bag.get_start_time()
 
     curr_imdata = None
     curr_odomdata = None
+    curr_veldata = None
 
-    for topic, msg, t in bag.read_messages(topics=[imtopic, odomtopic]):
+    for topic, msg, t in bag.read_messages(topics=[imtopic, odomtopic, veltopic]):
         if topic == imtopic:
             curr_imdata = msg
         elif topic == odomtopic:
             curr_odomdata = msg
+        elif topic == veltopic:
+            curr_veldata = msg
         if (t.to_sec() - currtime) >= 1.0 / rate:
-            if curr_imdata is not None and curr_odomdata is not None:
+            if curr_imdata is not None and curr_odomdata is not None and curr_veldata is not None:
                 synced_imdata.append(curr_imdata)
                 synced_odomdata.append(curr_odomdata)
+                synced_veldata.append(curr_veldata)
                 currtime = t.to_sec()
 
     img_data = process_images(synced_imdata, img_process_func)
