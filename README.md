@@ -290,6 +290,25 @@ When the robot is finishing navigating, kill the `pd_controller.py` script, and 
 
 We hope that this codebase is general enough to allow you to deploy it to your favorite ROS-based robots. You can change the robot configuration parameters in `vint_release/deployment/config/robot.yaml`, like the max angular and linear velocities of the robot and the topics to publish to teleop and control the robot. Please feel free to create a Github Issue or reach out to the authors at shah@cs.berkeley.edu.
 
+### Deployment on Clearpath Jackal
+
+#### Record the rosbag
+
+1. `rosrun image_transport republish compressed in:=/camera/color/image_raw raw out:=/camera/color/image_decompressed`
+2. `rosbag record -O topomap.bag /camera/color/image_decompressed`
+
+#### Make the topological map
+
+1. `python create_topomap.py --dir topomap_jackal`
+2. `rosbag play -r 1.5 topomap.bag` 
+
+Ensure that the image transport republish node is stopped before running the script to create the topomap.
+
+#### Navigation
+
+1. `rosrun image_transport republish compressed in:=/camera/color/image_raw raw out:=/camera/color/image_decompressed`
+2. `python navigate.py --model nomad --dir topomap_jackal`
+3. `python pd_controller.py`
 
 ## Citing
 ```
