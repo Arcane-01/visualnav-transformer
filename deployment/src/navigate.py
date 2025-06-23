@@ -39,7 +39,7 @@ from topic_names import (IMAGE_TOPIC,
                         WAYPOINT_TOPIC,
                         SAMPLED_ACTIONS_TOPIC)
 
-module_path = os.path.abspath('/home/container_user/catkin_ws/src/depth_anything_tensorrt/')
+module_path = os.path.abspath('/home/ims/NOMAD/visualnav-transformer/depth_anything_tensorrt/')
 if module_path not in sys.path:
     sys.path.insert(0, module_path)
 from depth_inference import image_callback, cost_function, coords_to_index
