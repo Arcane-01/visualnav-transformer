@@ -1,8 +1,8 @@
 # DepthAnything
-ENGINE_PATH = '/home/container_user/catkin_ws/src/depth_anything_tensorrt/checkpoints/trt'
+ENGINE_PATH = '/home/ims/NOMAD/visualnav-transformer/depth_anything_tensorrt/checkpoints/model.trt'
 IMAGE_SHAPE = (480, 640)
 OUTPUT_SHAPE = (480, 640) 
-IMAGE_TOPIC = '/realsense/color/image_raw'
+IMAGE_TOPIC = '/camera/color/image_decompressed'
 
 # Camera
 # FOCAL_LENGTH = 337.208
