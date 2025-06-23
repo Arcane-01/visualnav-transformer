@@ -1,10 +1,21 @@
 import matplotlib.pyplot as plt
 import os
+import sys
 from typing import Tuple, Sequence, Dict, Union, Optional, Callable
 import numpy as np
 import torch
 import torch.nn as nn
 from diffusers.schedulers.scheduling_ddpm import DDPMScheduler
+
+import cv2
+from cv_bridge import CvBridge
+from sensor_msgs.msg import CameraInfo
+import yaml
+from sensor_msgs.msg import PointCloud2, PointField
+from sensor_msgs import point_cloud2
+from nav_msgs.msg import Path
+from geometry_msgs.msg import PointStamped, PoseStamped
+import cv_bridge
 
 import matplotlib.pyplot as plt
 import yaml
@@ -28,6 +39,10 @@ from topic_names import (IMAGE_TOPIC,
                         WAYPOINT_TOPIC,
                         SAMPLED_ACTIONS_TOPIC)
 
+module_path = os.path.abspath('/home/container_user/catkin_ws/src/depth_anything_tensorrt/')
+if module_path not in sys.path:
+    sys.path.insert(0, module_path)
+from depth_inference import image_callback, cost_function, coords_to_index
 
 # CONSTANTS
 TOPOMAP_IMAGES_DIR = "../topomaps/images"
@@ -44,24 +59,144 @@ RATE = robot_config["frame_rate"]
 context_queue = []
 context_size = None  
 subgoal = []
+tsdf = None
+tsdf_pub = rospy.Publisher('/tsdf', Image, queue_size=1)
 
 # Load the model 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print("Using device:", device)
 
+def point_proj(traj, index):
+    cv_bridge = CvBridge()
+    # Camera parameters for RealSense D455 at 640x480 resolution
+    camera_matrix = np.array([
+    [337.208, 0.0,    320.5],
+    [0.0,    337.208, 240.5],
+    [0.0,    0.0,    1.0]
+    ], dtype=np.float32)
+
+    # Distortion coefficients (5x1)
+    dist_coeffs = np.array([1e-08, 1e-08, 1e-08, 1e-08, 1e-08])
+
+    # Define the rotation and translation vectors
+    R_left = np.array([
+        [0.999984, -0.00329689, 0.00449711],
+        [0.00329771, 0.999995, -0.000175344],
+        [-0.00449651, 0.000190172, 0.99999]
+    ], dtype=np.float32)
+
+    # Convert rotation matrix to rotation vector
+    tvec = (0, 0, 0)  # Assuming no rotation for simplicity
+    rvec, _ = cv2.Rodrigues(R_left)
+    
+    cv_image = cv_bridge.imgmsg_to_cv2(proj_msg, desired_encoding='rgb8')
+    
+    for i in range(len(traj)):
+        if i == index:
+            colour = (0, 255, 0)  # Green for the chosen waypoint
+        else:
+            colour = (255, 0, 0)
+            
+        points_3d = np.array([[-traj[i][j][1], 1, traj[i][j][0]] for j in range(len(traj[i]))], dtype=np.float32) # camera height 0.65m
+        points_2d, _ = cv2.projectPoints(points_3d,
+                                    rvec, tvec,
+                                    camera_matrix,
+                                    dist_coeffs)
+        points_2d = points_2d.reshape(-1, 2).astype(int)
+
+        # Draw connecting lines
+        for i in range(len(points_2d) - 1):
+            start = tuple(map(int, points_2d[i]))  # Explicit conversion to integers
+            end = tuple(map(int, points_2d[i+1]))
+            cv2.line(cv_image, start, end, colour, 2)  
+        # for pt in points_2d:
+        #     cv2.circle(cv_image, tuple(pt), 2, colour, -1)
+
+    img_waypoint_msg = cv_bridge.cv2_to_imgmsg(cv_image, encoding='rgb8')
+    img_waypoint_msg.header = proj_msg.header
+    img_waypoint_pub.publish(img_waypoint_msg)
 
 def callback_obs(msg):
+    global proj_msg
+    proj_msg = msg
     obs_img = msg_to_pil(msg)
-    if context_size is not None:
+    if context_size is not None: # context_size is set to 3 in cofig
         if len(context_queue) < context_size + 1:
             context_queue.append(obs_img)
         else:
             context_queue.pop(0)
             context_queue.append(obs_img)
 
+def publish_tsdf(tsdf, trajs):
+    indices = coords_to_index(tsdf, trajs)
+    bridge = cv_bridge.CvBridge()
+    colored_tsdf = cv2.applyColorMap(tsdf.astype(np.uint8), cv2.COLORMAP_PLASMA)
+    header = rospy.Header()
+    header.stamp = rospy.Time.now()
+    header.frame_id = "realsense_color_optical_frame"
+
+    for traj_indices in indices:
+        for idx in traj_indices:
+            if idx is not None:
+                cv2.circle(colored_tsdf, (idx[1], idx[0]), 1, 0, -1)
+    tsdf_msg = bridge.cv2_to_imgmsg(colored_tsdf, encoding="bgr8")
+    tsdf_msg.header = header
+    tsdf_pub.publish(tsdf_msg)
+
+def publish_waypoint_cloud(waypoints, index):
+    # Define PointCloud2 fields (x, y, z coordinates)
+    points = []
+    fields = [
+        PointField("x", 0, PointField.FLOAT32, 1),
+        PointField("y", 4, PointField.FLOAT32, 1),
+        PointField("z", 8, PointField.FLOAT32, 1),
+        PointField('intensity', 12, PointField.FLOAT32, 1)
+    ]
+    
+    # Create PointCloud2 header
+    header = rospy.Header()
+    header.stamp = rospy.Time.now()
+    header.frame_id = "base_link"  # Match your camera's TF frame
+    
+    # Convert waypoints to list of tuples (x, y, z)
+    for i in range(len(waypoints)):
+        if i == index:
+            intensity = 100
+        else:
+            intensity = 10
+        if len(waypoints[i][0]) == 4:
+            for (x, y, n, m) in waypoints[i]:
+                points.append((x, y, 0, intensity))
+        else:
+            for (x, y) in waypoints[i]:
+                points.append((x, y, 0, intensity))
+    
+    # Generate PointCloud2 message
+    pc_msg = point_cloud2.create_cloud(header, fields, points)
+    
+    # Publish
+    pc_pub.publish(pc_msg)
+
+def publish_trajectory(trajectory):
+    # Define PointCloud2 fields (x, y, z coordinates)
+    poses = []
+    for i in range(len(trajectory)):
+        pose = PoseStamped()
+        pose.header.frame_id = "base_link" # "odom"
+        pose.header.stamp = rospy.Time.now()
+        pose.pose.position.x = trajectory[i][0]
+        pose.pose.position.y = trajectory[i][1]
+        poses.append(pose)
+    
+    path_msg = Path()
+    path_msg.header.frame_id = "base_link" # "odom"
+    path_msg.header.stamp = rospy.Time.now()
+    
+    path_msg.poses = poses    
+    trajectory_pub.publish(path_msg)
 
 def main(args: argparse.Namespace):
-    global context_size
+    global context_size, img_waypoint_pub, pc_pub, trajectory_pub, tsdf
 
      # load model parameters
     with open(MODEL_CONFIG_PATH, "r") as f:
@@ -99,7 +234,7 @@ def main(args: argparse.Namespace):
         topomap.append(PILImage.open(image_path))
 
     closest_node = 0
-    assert -1 <= args.goal_node < len(topomap), "Invalid goal index"
+    assert -1 <= args.goal_node < len(topomap), "Invalid goal index" # can specify the goal node in args
     if args.goal_node == -1:
         goal_node = len(topomap) - 1
     else:
@@ -109,17 +244,28 @@ def main(args: argparse.Namespace):
      # ROS
     rospy.init_node("EXPLORATION", anonymous=False)
     rate = rospy.Rate(RATE)
+    pc_pub = rospy.Publisher("/waypoint_cloud", PointCloud2, queue_size=1)
+    
     image_curr_msg = rospy.Subscriber(
         IMAGE_TOPIC, Image, callback_obs, queue_size=1)
+    
+    img_waypoint_pub = rospy.Publisher(
+        "/image_waypoint", Image, queue_size=1)  # for visualization of the chosen waypoint in the image
+    
+    trajectory_pub = rospy.Publisher("/trajectory", Path, queue_size=1)
+    
     waypoint_pub = rospy.Publisher(
         WAYPOINT_TOPIC, Float32MultiArray, queue_size=1)  
+    
     sampled_actions_pub = rospy.Publisher(SAMPLED_ACTIONS_TOPIC, Float32MultiArray, queue_size=1)
+    
+    # img_waypoint_pub = rospy.Publisher("/image_waypoint", Image, queue_size=1)
     goal_pub = rospy.Publisher("/topoplan/reached_goal", Bool, queue_size=1)
 
     print("Registered with master node. Waiting for image observations...")
 
     if model_params["model_type"] == "nomad":
-        num_diffusion_iters = model_params["num_diffusion_iters"]
+        num_diffusion_iters = model_params["num_diffusion_iters"]  # currently 10
         noise_scheduler = DDPMScheduler(
             num_train_timesteps=model_params["num_diffusion_iters"],
             beta_schedule='squaredcos_cap_v2',
@@ -132,11 +278,12 @@ def main(args: argparse.Namespace):
         chosen_waypoint = np.zeros(4)
         if len(context_queue) > model_params["context_size"]:
             if model_params["model_type"] == "nomad":
+                tsdf = image_callback(context_queue[-1])
                 obs_images = transform_images(context_queue, model_params["image_size"], center_crop=False)
                 obs_images = torch.split(obs_images, 3, dim=1)
                 obs_images = torch.cat(obs_images, dim=1) 
                 obs_images = obs_images.to(device)
-                mask = torch.zeros(1).long().to(device)  
+                mask = torch.zeros(1).long().to(device)  # setting mask to 1 will mask the goal image
 
                 start = max(closest_node - args.radius, 0)
                 end = min(closest_node + args.radius + 1, goal_node)
@@ -149,11 +296,12 @@ def main(args: argparse.Namespace):
                 min_idx = np.argmin(dists)
                 closest_node = min_idx + start
                 print("closest node:", closest_node)
-                sg_idx = min(min_idx + int(dists[min_idx] < args.close_threshold), len(obsgoal_cond) - 1)
+                sg_idx = min(min_idx + int(dists[min_idx] < args.close_threshold), len(obsgoal_cond) - 1) # subgoal index
                 obs_cond = obsgoal_cond[sg_idx].unsqueeze(0)
 
-                # infer action
+                # infer action 
                 with torch.no_grad():
+                    
                     # encoder vision features
                     if len(obs_cond.shape) == 2:
                         obs_cond = obs_cond.repeat(args.num_samples, 1)
@@ -186,12 +334,27 @@ def main(args: argparse.Namespace):
                     print("time elapsed:", time.time() - start_time)
 
                 naction = to_numpy(get_action(naction))
+
+                trajs_cost = cost_function(tsdf, naction)
+                max_idx = np.argmax(trajs_cost)
+                publish_tsdf(tsdf, naction)
+                print('Trajs Cost', trajs_cost, max_idx)
+                # print("sampled actions shape:", naction.shape)
+                publish_waypoint_cloud(naction, max_idx)
+
+                point_proj(naction, max_idx)
                 sampled_actions_msg = Float32MultiArray()
                 sampled_actions_msg.data = np.concatenate((np.array([0]), naction.flatten()))
                 print("published sampled actions")
+                # for sg in naction[0]:
+                #     u, v = camera_model.project3dToPixel((sg[0], 0, sg[1]))
+                #     img_waypoint.append((u, v))
+                
                 sampled_actions_pub.publish(sampled_actions_msg)
-                naction = naction[0] 
+                naction = naction[max_idx] 
+                publish_trajectory(naction)
                 chosen_waypoint = naction[args.waypoint]
+                print("chosen waypoint:", chosen_waypoint)
             else:
                 start = max(closest_node - args.radius, 0)
                 end = min(closest_node + args.radius + 1, goal_node)
@@ -212,17 +375,28 @@ def main(args: argparse.Namespace):
                 distances, waypoints = model(batch_obs_imgs, batch_goal_data)
                 distances = to_numpy(distances)
                 waypoints = to_numpy(waypoints)
+                # print(waypoints[0][0])
+                # publish_waypoint_cloud(waypoints)
+                
                 # look for closest node
                 min_dist_idx = np.argmin(distances)
+                
                 # chose subgoal and output waypoints
                 if distances[min_dist_idx] > args.close_threshold:
+                    publish_trajectory(waypoints[min_dist_idx])
+                    point_proj(waypoints, min_dist_idx)
                     chosen_waypoint = waypoints[min_dist_idx][args.waypoint]
                     closest_node = start + min_dist_idx
                 else:
+                    publish_trajectory(waypoints[min(min_dist_idx + 1, len(waypoints) - 1)])
+                    point_proj(waypoints, min(min_dist_idx + 1, len(waypoints) - 1))
                     chosen_waypoint = waypoints[min(
                         min_dist_idx + 1, len(waypoints) - 1)][args.waypoint]
                     closest_node = min(start + min_dist_idx + 1, goal_node)
-                print("published waypoint")
+                
+                print("closest node:",closest_node)
+                
+                # print(chosen_waypoint)
         # RECOVERY MODE
         if model_params["normalize"]:
             chosen_waypoint[:2] *= (MAX_V / RATE)  
@@ -231,8 +405,10 @@ def main(args: argparse.Namespace):
         waypoint_pub.publish(waypoint_msg)
         reached_goal = closest_node == goal_node
         goal_pub.publish(reached_goal)
+        # rospy.spin()
         if reached_goal:
             print("Reached goal! Stopping...")
+            rospy.signal_shutdown("Reached goal")
         rate.sleep()
 
 
