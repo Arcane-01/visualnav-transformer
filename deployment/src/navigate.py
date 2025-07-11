@@ -65,6 +65,19 @@ tsdf_pub = rospy.Publisher('/tsdf', Image, queue_size=1)
 # Load the model 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print("Using device:", device)
+from tf.transformations import quaternion_matrix
+
+def get_camera_transform_from_tf():
+    
+    # Your tf data
+    translation = np.array([0.160, 0.032, 0.286], dtype=np.float32)
+    quaternion = np.array([0.503, -0.498, 0.501, -0.498], dtype=np.float32)  # [x, y, z, w]
+    
+    # Convert quaternion to rotation matrix
+    T_matrix = quaternion_matrix(quaternion)
+    rotation_matrix = T_matrix[0:3, 0:3].astype(np.float32)
+    
+    return rotation_matrix, translation
 
 def point_proj(traj, index):
     cv_bridge = CvBridge()
@@ -84,6 +97,8 @@ def point_proj(traj, index):
         [0.00329771, 0.999995, -0.000175344],
         [-0.00449651, 0.000190172, 0.99999]
     ], dtype=np.float32)
+
+    # R_camera, tvec = get_camera_transform_from_tf()
 
     # Convert rotation matrix to rotation vector
     tvec = (0, 0, 0)  # Assuming no rotation for simplicity
@@ -133,7 +148,7 @@ def publish_tsdf(tsdf, trajs):
     colored_tsdf = cv2.applyColorMap(tsdf.astype(np.uint8), cv2.COLORMAP_PLASMA)
     header = rospy.Header()
     header.stamp = rospy.Time.now()
-    header.frame_id = "realsense_color_optical_frame"
+    header.frame_id = "camera_color_optical_frame"
 
     for traj_indices in indices:
         for idx in traj_indices:
@@ -341,7 +356,7 @@ def main(args: argparse.Namespace):
                 print('Trajs Cost', trajs_cost, max_idx)
                 # print("sampled actions shape:", naction.shape)
                 publish_waypoint_cloud(naction, max_idx)
-
+                # print(naction.shape)
                 point_proj(naction, max_idx)
                 sampled_actions_msg = Float32MultiArray()
                 sampled_actions_msg.data = np.concatenate((np.array([0]), naction.flatten()))
