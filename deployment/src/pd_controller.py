@@ -1,12 +1,13 @@
 import numpy as np
 import yaml
 from typing import Tuple
+import os
 
 # ROS
 import rospy
 from geometry_msgs.msg import Twist
 from std_msgs.msg import Float32MultiArray, Bool
-
+from nav_msgs.msg import Odometry
 from topic_names import (WAYPOINT_TOPIC, 
 			 			REACHED_GOAL_TOPIC)
 from ros_data import ROSData
@@ -31,6 +32,12 @@ waypoint = ROSData(WAYPOINT_TIMEOUT, name="waypoint")
 reached_goal = False
 reverse_mode = False
 current_yaw = None
+
+# Data saving globals
+odom = None
+state = None
+save_num = 0
+train_dir = None
 
 def clip_angle(theta) -> float:
 	"""Clip angle to [-pi, pi]"""
@@ -74,6 +81,53 @@ def callback_reached_goal(reached_goal_msg: Bool):
 	global reached_goal
 	reached_goal = reached_goal_msg.data
 
+def odom_callback(odom_data):
+	global odom, state
+	if odom_data is None:
+		return
+
+	odom = odom_data
+
+	linear_vel_odom = np.array([
+		odom_data.twist.twist.linear.x,
+		odom_data.twist.twist.linear.y,
+		odom_data.twist.twist.linear.z
+	])
+	
+	angular_vel_odom = np.array([
+		odom_data.twist.twist.angular.z
+	])
+
+	state = np.array([linear_vel_odom[0], angular_vel_odom[0]])
+
+def _call_planner(event):
+
+	global save_num, train_dir, odom, state
+	
+	if (odom is not None):
+		np.savez(os.path.join(train_dir, f'data{save_num}.npz'),
+				state = np.array(state),
+			)
+		print("DATA SAVED FOR: ", save_num)
+		save_num += 1
+
+def setup_data_saving():
+	"""Setup data saving directory and parameters"""
+	global train_dir
+	
+
+	data_dir = "/home/ims/jackal_primitives_ws/data/comparison/NOMAD/nomad"
+	train_dir = os.path.join(data_dir, "1-1")
+	os.makedirs(train_dir, exist_ok=True)
+	
+	odom_topic = rospy.get_param('~odom_topic', '/odometry/filtered')
+	odom_sub = rospy.Subscriber(odom_topic, Odometry, odom_callback)
+	
+	config_planner_frequency = 10 
+	timer_save = rospy.Timer(rospy.Duration(1. / config_planner_frequency), _call_planner)
+	
+	print(f"[DATA SAVING] Setup complete. Saving to: {train_dir}")
+	return odom_sub, timer_save
 
 def main():
 	global vel_msg, reverse_mode
@@ -81,6 +135,9 @@ def main():
 	waypoint_sub = rospy.Subscriber(WAYPOINT_TOPIC, Float32MultiArray, callback_drive, queue_size=1)
 	reached_goal_sub = rospy.Subscriber(REACHED_GOAL_TOPIC, Bool, callback_reached_goal, queue_size=1)
 	vel_out = rospy.Publisher(VEL_TOPIC, Twist, queue_size=1)
+
+	mocap_sub, timer_save = setup_data_saving()
+
 	rate = rospy.Rate(RATE)
 	print("Registered with master node. Waiting for waypoints...")
 	while not rospy.is_shutdown():
