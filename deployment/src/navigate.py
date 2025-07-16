@@ -5,9 +5,10 @@ import numpy as np
 import torch
 import torch.nn as nn
 from diffusers.schedulers.scheduling_ddpm import DDPMScheduler
-
+from geometry_msgs.msg import PoseStamped, Point, Twist, Vector3, Point
 import matplotlib.pyplot as plt
 import yaml
+from visualization_msgs.msg import Marker, MarkerArray
 
 # ROS
 import rospy
@@ -44,12 +45,46 @@ RATE = robot_config["frame_rate"]
 context_queue = []
 context_size = None  
 subgoal = []
-
+linestrip_pub = None
 # Load the model 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print("Using device:", device)
 
+def _create_primitive_marker(idx, data, namespace, rgb, line_width):
 
+    marker = Marker()
+    marker.type = Marker.LINE_STRIP
+    marker.action = Marker.ADD
+    marker.scale = Vector3(line_width, 0.01, 0)         # only scale.x used for line strip
+    marker.color.r = rgb[0]                        # color 
+    marker.color.g = rgb[1]                        
+    marker.color.b = rgb[2]                         
+    marker.color.a = 1.0                           # alpha - transparency parameter
+
+    marker.ns = namespace
+    marker.pose.orientation.w = 1.0
+
+    for i in range(data.shape[0]):
+        point = Point()
+        point.x = data[i, 0]
+        point.y = data[i, 1]
+        point.z = 0.0
+        marker.points.append(point)
+
+    marker.id = idx
+    marker.header.stamp = rospy.get_rostime()
+    marker.lifetime = rospy.Duration(0.25)
+    # marker.lifetime = rospy.Duration(0.0667)
+    marker.header.frame_id = "base_link"
+
+    return marker
+
+def _visualize_trajectories(traj_optimal):
+    global linestrip_pub
+    if linestrip_pub is not None:
+        trajoptimal_marker = _create_primitive_marker(0, traj_optimal, "traj_optimal", [0.00, 1.00, 1.00], 0.1)
+        linestrip_pub.publish(trajoptimal_marker)
+        
 def callback_obs(msg):
     obs_img = msg_to_pil(msg)
     if context_size is not None:
@@ -115,6 +150,8 @@ def main(args: argparse.Namespace):
         WAYPOINT_TOPIC, Float32MultiArray, queue_size=1)  
     sampled_actions_pub = rospy.Publisher(SAMPLED_ACTIONS_TOPIC, Float32MultiArray, queue_size=1)
     goal_pub = rospy.Publisher("/topoplan/reached_goal", Bool, queue_size=1)
+
+    _linestrip_pub = rospy.Publisher('/trajectory_optimal', Marker, queue_size=10)
 
     print("Registered with master node. Waiting for image observations...")
 
@@ -185,12 +222,13 @@ def main(args: argparse.Namespace):
                         ).prev_sample
                     print("time elapsed:", time.time() - start_time)
 
-                naction = to_numpy(get_action(naction))
+                naction = to_numpy(get_action(naction)) # (8, 8, 2)
                 sampled_actions_msg = Float32MultiArray()
                 sampled_actions_msg.data = np.concatenate((np.array([0]), naction.flatten()))
                 print("published sampled actions")
                 sampled_actions_pub.publish(sampled_actions_msg)
-                naction = naction[0] 
+                naction = naction[0] # (8, 2)
+                _visualize_trajectories(naction)
                 chosen_waypoint = naction[args.waypoint]
             else:
                 start = max(closest_node - args.radius, 0)
