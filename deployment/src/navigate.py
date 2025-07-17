@@ -23,6 +23,8 @@ import numpy as np
 import argparse
 import yaml
 import time
+import os
+from datetime import datetime
 
 # UTILS
 from topic_names import (IMAGE_TOPIC,
@@ -49,6 +51,11 @@ linestrip_pub = None
 # Load the model 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print("Using device:", device)
+
+
+image_counter = 0
+save_images = False  
+save_dir = "/home/ims/NOMAD/qualitative_results/"  
 
 def _create_primitive_marker(idx, data, namespace, rgb, line_width):
 
@@ -80,13 +87,31 @@ def _create_primitive_marker(idx, data, namespace, rgb, line_width):
     return marker
 
 def _visualize_trajectories(traj_optimal):
+    start_point = np.array([[0, 0]])
+    traj_with_start = np.concatenate([start_point, traj_optimal], axis=0)
+    result = traj_with_start[:5]
+
     global linestrip_pub
     if linestrip_pub is not None:
-        trajoptimal_marker = _create_primitive_marker(0, traj_optimal, "traj_optimal", [0.00, 1.00, 1.00], 0.1)
+        trajoptimal_marker = _create_primitive_marker(0, result, "traj_optimal", [0.12, 0.35, 0.71], 0.1)
         linestrip_pub.publish(trajoptimal_marker)
-        
+
 def callback_obs(msg):
+    global image_counter, save_images, save_dir
+
     obs_img = msg_to_pil(msg)
+
+    if save_images:
+        if not os.path.exists(save_dir):
+            os.makedirs(save_dir)
+        filename = f"nomad_image_{image_counter:06d}.png"
+        
+        filepath = os.path.join(save_dir, filename)
+        obs_img.save(filepath)
+        print(f"Saved image: {filepath}")
+        
+        # image_counter += 1
+
     if context_size is not None:
         if len(context_queue) < context_size + 1:
             context_queue.append(obs_img)
@@ -96,7 +121,7 @@ def callback_obs(msg):
 
 
 def main(args: argparse.Namespace):
-    global context_size
+    global context_size, linestrip_pub
 
      # load model parameters
     with open(MODEL_CONFIG_PATH, "r") as f:
@@ -151,7 +176,7 @@ def main(args: argparse.Namespace):
     sampled_actions_pub = rospy.Publisher(SAMPLED_ACTIONS_TOPIC, Float32MultiArray, queue_size=1)
     goal_pub = rospy.Publisher("/topoplan/reached_goal", Bool, queue_size=1)
 
-    _linestrip_pub = rospy.Publisher('/trajectory_optimal', Marker, queue_size=10)
+    linestrip_pub = rospy.Publisher('/trajectory_optimal', Marker, queue_size=10)
 
     print("Registered with master node. Waiting for image observations...")
 
@@ -220,7 +245,7 @@ def main(args: argparse.Namespace):
                             timestep=k,
                             sample=naction
                         ).prev_sample
-                    print("time elapsed:", time.time() - start_time)
+                    # print("time elapsed:", time.time() - start_time)
 
                 naction = to_numpy(get_action(naction)) # (8, 8, 2)
                 sampled_actions_msg = Float32MultiArray()
@@ -228,6 +253,7 @@ def main(args: argparse.Namespace):
                 print("published sampled actions")
                 sampled_actions_pub.publish(sampled_actions_msg)
                 naction = naction[0] # (8, 2)
+                # print(naction)
                 _visualize_trajectories(naction)
                 chosen_waypoint = naction[args.waypoint]
             else:

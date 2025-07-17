@@ -117,7 +117,7 @@ def setup_data_saving():
 	
 
 	data_dir = "/home/ims/jackal_primitives_ws/data/comparison/NOMAD/nomad"
-	train_dir = os.path.join(data_dir, "1-1")
+	train_dir = os.path.join(data_dir, "4-15")
 	os.makedirs(train_dir, exist_ok=True)
 	
 	odom_topic = rospy.get_param('~odom_topic', '/odometry/filtered')
@@ -136,7 +136,7 @@ def main():
 	reached_goal_sub = rospy.Subscriber(REACHED_GOAL_TOPIC, Bool, callback_reached_goal, queue_size=1)
 	vel_out = rospy.Publisher(VEL_TOPIC, Twist, queue_size=1)
 
-	mocap_sub, timer_save = setup_data_saving()
+	# mocap_sub, timer_save = setup_data_saving()
 
 	rate = rospy.Rate(RATE)
 	print("Registered with master node. Waiting for waypoints...")
