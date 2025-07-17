@@ -96,7 +96,7 @@ def _create_primitive_marker(idx, data, namespace, rgb, line_width):
 
     marker.id = idx
     marker.header.stamp = rospy.get_rostime()
-    marker.lifetime = rospy.Duration(0.25)
+    marker.lifetime = rospy.Duration(0.75)
     # marker.lifetime = rospy.Duration(0.0667)
     marker.header.frame_id = "base_link"
 

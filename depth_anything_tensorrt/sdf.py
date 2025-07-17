@@ -118,8 +118,18 @@ def create_occupancy_map(points, x_bounds=(0, 10), y_bounds=(-4, 4), resolution=
 
 def depth_to_pcd(depth_map):    
 
-    intrinsics = o3d.camera.PinholeCameraIntrinsic(width=640, height=480,
-    fx=337.208, fy=337.208, cx=320.5, cy=240.5)
+    # intrinsics = o3d.camera.PinholeCameraIntrinsic(width=640, height=480,
+    # fx=337.208, fy=337.208, cx=320.5, cy=240.5)
+
+    intrinsics = o3d.camera.PinholeCameraIntrinsic(
+        width=640, 
+        height=480,
+        fx=614.4420776367188,     
+        fy=614.4395751953125,      
+        cx=316.7901306152344,      
+        cy=248.07864379882812     
+    )
+
     pcd = o3d.geometry.PointCloud.create_from_depth_image(depth_map, intrinsics, depth_trunc=5)
     
     pcd.transform([[1, 0, 0, 0],
@@ -135,7 +145,8 @@ def depth_to_pcd(depth_map):
 
 def pcd_to_laser(pcd_points):
     pcd_points = np.asarray(pcd_points)
-    filtered = pcd_points[(pcd_points[:, 2] > 0.6) & (pcd_points[:, 2] < 0.9)]
+    # filtered = pcd_points[(pcd_points[:, 2] > 0.6) & (pcd_points[:, 2] < 0.9)]
+    filtered = pcd_points[(pcd_points[:, 2] > 0.1) & (pcd_points[:, 2] < 0.2)]
     # Convert to Lidar coordinate frame
     laser_points = np.stack([filtered[:, 0], filtered[:, 1]], axis=1)
 
