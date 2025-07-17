@@ -1,0 +1,18 @@
+<launch>
+
+  <node pkg="tf2_ros" type="static_transform_publisher" name="jackal_to_base_link_broadcaster"
+  args="0 0 0 0 0 0 jackal base_link" />
+
+  <node pkg="tf2_ros" type="static_transform_publisher" name="world_to_odom_broadcaster"
+  args="0 0 0 0 0 0 world odom" />
+
+
+  <node type="rviz" name="rviz" pkg="rviz" args="-d /home/ims//NOMAD/visualnav-transformer/deployment/src/rviz/depth-anything.rviz" >
+  </node>
+
+  <!-- <node type="rviz" name="rviz" pkg="rviz" args="-d /home/ims//NOMAD/visualnav-transformer/deployment/src/rviz/nomad_trajectory.rviz" >
+  </node> -->
+
+</launch>
+
+
