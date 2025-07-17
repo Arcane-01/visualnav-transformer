@@ -34,6 +34,9 @@ import argparse
 import yaml
 import time
 
+from geometry_msgs.msg import PoseStamped, Point, Twist, Vector3
+from visualization_msgs.msg import Marker, MarkerArray
+
 # UTILS
 from topic_names import (IMAGE_TOPIC,
                         WAYPOINT_TOPIC,
@@ -62,10 +65,81 @@ subgoal = []
 tsdf = None
 tsdf_pub = rospy.Publisher('/tsdf', Image, queue_size=1)
 
+linestrip_pub = None
+markerarr_pub = None
+
 # Load the model 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print("Using device:", device)
 from tf.transformations import quaternion_matrix
+
+def _create_primitive_marker(idx, data, namespace, rgb, line_width):
+
+    marker = Marker()
+    marker.type = Marker.LINE_STRIP
+    marker.action = Marker.ADD
+    marker.scale = Vector3(line_width, 0.01, 0)         # only scale.x used for line strip
+    marker.color.r = rgb[0]                        # color 
+    marker.color.g = rgb[1]                        
+    marker.color.b = rgb[2]                         
+    marker.color.a = 1.0                           # alpha - transparency parameter
+
+    marker.ns = namespace
+    marker.pose.orientation.w = 1.0
+
+    for i in range(data.shape[0]):
+        point = Point()
+        point.x = data[i, 0]
+        point.y = data[i, 1]
+        point.z = 0.0
+        marker.points.append(point)
+
+    marker.id = idx
+    marker.header.stamp = rospy.get_rostime()
+    marker.lifetime = rospy.Duration(0.25)
+    # marker.lifetime = rospy.Duration(0.0667)
+    marker.header.frame_id = "base_link"
+
+    return marker
+
+# def _visualize_trajectories(traj_optimal):
+#     start_point = np.array([[0, 0]])
+#     traj_with_start = np.concatenate([start_point, traj_optimal], axis=0)
+#     result = traj_with_start[:5]
+
+#     global linestrip_pub
+#     if linestrip_pub is not None:
+#         trajoptimal_marker = _create_primitive_marker(0, result, "traj_optimal", [0.12, 0.35, 0.71], 0.1)
+#         linestrip_pub.publish(trajoptimal_marker)
+
+def _visualize_trajectories(n_action, max_idx):
+    
+    traj_optimal = n_action[max_idx]
+    primitives_roll = np.delete(n_action, max_idx, axis=0)
+
+    # Add [0,0] start point and clip to first 5 points for traj_optimal
+    start_point = np.array([[0, 0]])
+    traj_optimal_with_start = np.concatenate([start_point, traj_optimal], axis=0)
+    traj_optimal_clipped = traj_optimal_with_start[:5]
+
+    # Add [0,0] start point and clip to first 5 points for each primitive in primitives_roll
+    primitives_roll_processed = []
+    for primitive in primitives_roll:
+        primitive_with_start = np.concatenate([start_point, primitive], axis=0)
+        primitive_clipped = primitive_with_start[:5]
+        primitives_roll_processed.append(primitive_clipped)
+
+    global linestrip_pub, markerarr_pub
+    if linestrip_pub is not None and markerarr_pub is not None:
+        marker_array = MarkerArray()
+        for idx in range(len(primitives_roll_processed)):
+            marker = _create_primitive_marker(idx, primitives_roll_processed[idx], "primitives_roll", [0.12, 0.35, 0.71], 0.045)
+            marker_array.markers.append(marker)
+
+        trajoptimal_marker = _create_primitive_marker(0, traj_optimal_clipped, "traj_optimal", [0.00, 1.00, 1.00], 0.1)
+
+        markerarr_pub.publish(marker_array)
+        linestrip_pub.publish(trajoptimal_marker)
 
 def get_camera_transform_from_tf():
     
@@ -211,7 +285,7 @@ def publish_trajectory(trajectory):
     trajectory_pub.publish(path_msg)
 
 def main(args: argparse.Namespace):
-    global context_size, img_waypoint_pub, pc_pub, trajectory_pub, tsdf
+    global context_size, img_waypoint_pub, pc_pub, trajectory_pub, tsdf, linestrip_pub, markerarr_pub
 
      # load model parameters
     with open(MODEL_CONFIG_PATH, "r") as f:
@@ -276,6 +350,9 @@ def main(args: argparse.Namespace):
     
     # img_waypoint_pub = rospy.Publisher("/image_waypoint", Image, queue_size=1)
     goal_pub = rospy.Publisher("/topoplan/reached_goal", Bool, queue_size=1)
+
+    linestrip_pub = rospy.Publisher('/trajectory_optimal', Marker, queue_size=10)
+    markerarr_pub = rospy.Publisher('/primitives_ellite', MarkerArray, queue_size=10)
 
     print("Registered with master node. Waiting for image observations...")
 
@@ -358,6 +435,7 @@ def main(args: argparse.Namespace):
                 publish_waypoint_cloud(naction, max_idx)
                 # print(naction.shape)
                 point_proj(naction, max_idx)
+                _visualize_trajectories(naction, max_idx)
                 sampled_actions_msg = Float32MultiArray()
                 sampled_actions_msg.data = np.concatenate((np.array([0]), naction.flatten()))
                 print("published sampled actions")
@@ -366,7 +444,8 @@ def main(args: argparse.Namespace):
                 #     img_waypoint.append((u, v))
                 
                 sampled_actions_pub.publish(sampled_actions_msg)
-                naction = naction[max_idx] 
+                naction = naction[max_idx]
+                
                 publish_trajectory(naction)
                 chosen_waypoint = naction[args.waypoint]
                 print("chosen waypoint:", chosen_waypoint)
