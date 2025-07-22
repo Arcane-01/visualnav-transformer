@@ -26,6 +26,9 @@ import time
 import os
 from datetime import datetime
 
+import cv2
+from cv_bridge import CvBridge
+
 # UTILS
 from topic_names import (IMAGE_TOPIC,
                         WAYPOINT_TOPIC,
@@ -57,6 +60,48 @@ image_counter = 0
 save_images = False  
 save_dir = "/home/ims/NOMAD/qualitative_results/"  
 
+def point_proj(traj):
+    cv_bridge = CvBridge()
+    # Camera parameters for RealSense D455 at 640x480 resolution
+    camera_matrix = np.array([
+    [337.208, 0.0,    320.5],
+    [0.0,    337.208, 240.5],
+    [0.0,    0.0,    1.0]
+    ], dtype=np.float32)
+
+    # Distortion coefficients (5x1)
+    dist_coeffs = np.array([1e-08, 1e-08, 1e-08, 1e-08, 1e-08])
+
+    # Define the rotation and translation vectors
+    R_left = np.array([
+        [0.999984, -0.00329689, 0.00449711],
+        [0.00329771, 0.999995, -0.000175344],
+        [-0.00449651, 0.000190172, 0.99999]
+    ], dtype=np.float32)
+
+    tvec = (0, 0, 0)
+    rvec, _ = cv2.Rodrigues(R_left)
+    
+    cv_image = cv_bridge.imgmsg_to_cv2(proj_msg, desired_encoding='rgb8')
+    
+    # Remove the outer loop since you now have a single trajectory
+    colour = (31, 89, 181)
+    points_3d = np.array([[-traj[j][1], 1, traj[j][0]] for j in range(len(traj))], dtype=np.float32)
+    points_2d, _ = cv2.projectPoints(points_3d,
+                                rvec, tvec,
+                                camera_matrix,
+                                dist_coeffs)
+    points_2d = points_2d.reshape(-1, 2).astype(int)
+
+    # Draw connecting lines
+    for j in range(len(points_2d) - 1):
+        start = tuple(map(int, points_2d[j]))
+        end = tuple(map(int, points_2d[j+1]))
+        cv2.line(cv_image, start, end, colour, 2)
+
+    img_waypoint_msg = cv_bridge.cv2_to_imgmsg(cv_image, encoding='rgb8')
+    img_waypoint_msg.header = proj_msg.header
+    img_waypoint_pub.publish(img_waypoint_msg)
 def _create_primitive_marker(idx, data, namespace, rgb, line_width):
 
     marker = Marker()
@@ -99,6 +144,9 @@ def _visualize_trajectories(traj_optimal):
 def callback_obs(msg):
     global image_counter, save_images, save_dir
 
+    global proj_msg
+    proj_msg = msg
+
     obs_img = msg_to_pil(msg)
 
     if save_images:
@@ -121,7 +169,7 @@ def callback_obs(msg):
 
 
 def main(args: argparse.Namespace):
-    global context_size, linestrip_pub
+    global context_size, linestrip_pub, img_waypoint_pub
 
      # load model parameters
     with open(MODEL_CONFIG_PATH, "r") as f:
@@ -176,6 +224,9 @@ def main(args: argparse.Namespace):
     sampled_actions_pub = rospy.Publisher(SAMPLED_ACTIONS_TOPIC, Float32MultiArray, queue_size=1)
     goal_pub = rospy.Publisher("/topoplan/reached_goal", Bool, queue_size=1)
 
+    img_waypoint_pub = rospy.Publisher(
+        "/image_waypoint", Image, queue_size=1) 
+    
     linestrip_pub = rospy.Publisher('/trajectory_optimal', Marker, queue_size=10)
 
     print("Registered with master node. Waiting for image observations...")
@@ -254,6 +305,7 @@ def main(args: argparse.Namespace):
                 sampled_actions_pub.publish(sampled_actions_msg)
                 naction = naction[0] # (8, 2)
                 # print(naction)
+                point_proj(naction[:5])
                 _visualize_trajectories(naction)
                 chosen_waypoint = naction[args.waypoint]
             else:
